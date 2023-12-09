@@ -1169,6 +1169,47 @@ void JsonFamily::Set(CmdArgList args, ConnectionContext* cntx) {
   }
 }
 
+void JsonFamily::MSet(CmdArgList args, ConnectionContext* cntx) {
+  std::vector<string_view> keys(args.size() % 3);
+  std::vector<string_view> paths(args.size() % 3);
+  std::vector<string_view> json_strs(args.size() % 3);
+
+  string_view key = ArgS(args, 0);
+  string_view path = ArgS(args, 1);
+  string_view json_str = ArgS(args, 2);
+  bool is_nx_condition = false;
+  bool is_xx_condition = false;
+  string_view operation_opts;
+  if (args.size() > 3) {
+    operation_opts = ArgS(args, 3);
+    if (absl::EqualsIgnoreCase(operation_opts, "NX")) {
+      is_nx_condition = true;
+    } else if (absl::EqualsIgnoreCase(operation_opts, "XX")) {
+      is_xx_condition = true;
+    } else {
+      (*cntx)->SendError(kSyntaxErr);
+      return;
+    }
+  }
+
+  auto cb = [&](Transaction* t, EngineShard* shard) {
+    return OpSet(t->GetOpArgs(shard), key, path, json_str, is_nx_condition, is_xx_condition);
+  };
+
+  Transaction* trans = cntx->transaction;
+  OpResult<bool> result = trans->ScheduleSingleHopT(move(cb));
+
+  if (result) {
+    if (*result) {
+      (*cntx)->SendSimpleString("OK");
+    } else {
+      (*cntx)->SendNull();
+    }
+  } else {
+    (*cntx)->SendError(result.status());
+  }
+}
+
 void JsonFamily::Resp(CmdArgList args, ConnectionContext* cntx) {
   string_view key = ArgS(args, 0);
   string_view path = DefaultJsonPath;
@@ -1879,6 +1920,7 @@ void JsonFamily::Register(CommandRegistry* registry) {
   *registry << CI{"JSON.DEBUG", CO::READONLY | CO::FAST, -3, 2, 2, acl::JSON}.HFUNC(Debug);
   *registry << CI{"JSON.RESP", CO::READONLY | CO::FAST, -2, 1, 1, acl::JSON}.HFUNC(Resp);
   *registry << CI{"JSON.SET", CO::WRITE | CO::DENYOOM | CO::FAST, -4, 1, 1, acl::JSON}.HFUNC(Set);
+  *registry << CI{"JSON.MSET", CO::WRITE | CO::DENYOOM | CO::FAST, -4, 1, 1, acl::JSON}.HFUNC(MSet);
 }
 
 }  // namespace dfly
